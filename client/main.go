@@ -18,8 +18,8 @@ import (
 
 var (
 	chainToToken = map[string]string{
-		"ethereum": "ETH",
-		"solana":   "SOL",
+		"ETH": "ethereum",
+		"SOL": "solana",
 	}
 	// RPC endpoints
 	EthereumRPC string
@@ -114,9 +114,332 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+// ChainAddress represents a chain and address pair
+type ChainAddress struct {
+	Chain   string `json:"chain"`
+	Address string `json:"address"`
+}
+
+// Global variable to store chain addresses
+var chainAddresses []ChainAddress
+
+// ChainAddressBalance represents a chain address with its balance
+type ChainAddressBalance struct {
+	Address string `json:"address"`
+	Balance string `json:"balance"`
+}
+
+// GraphQLResponse represents the response structure from the GraphQL query
+type GraphQLResponse struct {
+	Data struct {
+		GetChainAddresses []ChainAddressBalance `json:"getChainAddresses"`
+	} `json:"data"`
+}
+
+// ChainPledge represents a pledge with deposit address and amount
+type ChainPledge struct {
+	DepositAddress string `json:"depositAddress"`
+	Amount         string `json:"amount"`
+}
+
+// ChainPledgesResponse represents the response structure from the GraphQL query
+type ChainPledgesResponse struct {
+	Data struct {
+		GetChainPledges []ChainPledge `json:"getChainPledges"`
+	} `json:"data"`
+}
+
+// ChainTotalPledge represents total pledges for a chain
+type ChainTotalPledge struct {
+	Chain  string `json:"chain"`
+	Amount string `json:"amount"`
+}
+
+// TotalPledgesResponse represents the response structure from the GraphQL query
+type TotalPledgesResponse struct {
+	Data struct {
+		GetTotalChainPledges []ChainTotalPledge `json:"getTotalChainPledges"`
+	} `json:"data"`
+}
+
+// CollectResponse represents the response structure from the GraphQL mutation
+type CollectResponse struct {
+	Data struct {
+		Collect bool `json:"collect"`
+	} `json:"data"`
+}
+
+func handleAddChainAddress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse the request body as an array of ChainAddress
+	var chainAddressArray []ChainAddress
+	if err := json.NewDecoder(r.Body).Decode(&chainAddressArray); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if len(chainAddressArray) == 0 {
+		http.Error(w, "Request body must contain at least one chain address", http.StatusBadRequest)
+		return
+	}
+
+	successfulAdditions := []ChainAddress{}
+	errors := []string{}
+
+	// Process each chain address
+	for _, chainAddr := range chainAddressArray {
+		// Validate chain
+		if chainAddr.Chain == "" {
+			errors = append(errors, "Chain is required")
+			continue
+		}
+
+		// Validate address
+		if chainAddr.Address == "" {
+			errors = append(errors, fmt.Sprintf("Address is required for chain %s", chainAddr.Chain))
+			continue
+		}
+
+		// Validate chain is supported
+		if _, ok := chainToToken[chainAddr.Chain]; !ok {
+			errors = append(errors, fmt.Sprintf("Unsupported chain: %s", chainAddr.Chain))
+			continue
+		}
+
+		// Build GraphQL mutation
+		mutation := fmt.Sprintf(`{"query":"mutation{addChain(chainName:\"%s\",address:\"%s\")}"}`, chainAddr.Chain, chainAddr.Address)
+
+		// Create request
+		req, err := http.NewRequest("POST", CrowdSolver, bytes.NewBuffer([]byte(mutation)))
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Error creating request for %s: %s", chainAddr.Chain, err.Error()))
+			continue
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+
+		// Send request
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Error sending request for %s: %s", chainAddr.Chain, err.Error()))
+			continue
+		}
+		resp.Body.Close()
+
+		// Add to the array
+		chainAddresses = append(chainAddresses, chainAddr)
+		successfulAdditions = append(successfulAdditions, chainAddr)
+	}
+
+	// Prepare response
+	response := map[string]interface{}{
+		"status":      "success",
+		"message":     fmt.Sprintf("Processed %d chain addresses", len(chainAddressArray)),
+		"successful":  successfulAdditions,
+		"errors":      errors,
+		"total_added": len(successfulAdditions),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func handleGetChainAddresses(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Build GraphQL query
+	query := `{"query":"query chainAddresses { getChainAddresses { address balance } }"}`
+
+	// Create request
+	req, err := http.NewRequest("POST", CrowdSolver, bytes.NewBuffer([]byte(query)))
+	if err != nil {
+		http.Error(w, "Error creating request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send request
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		http.Error(w, "Error sending request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Parse response
+	var graphqlResp GraphQLResponse
+	if err := json.NewDecoder(resp.Body).Decode(&graphqlResp); err != nil {
+		http.Error(w, "Error parsing response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Prepare response
+	response := map[string]interface{}{
+		"status":  "success",
+		"message": "Chain addresses retrieved successfully",
+		"data":    graphqlResp.Data.GetChainAddresses,
+		"count":   len(graphqlResp.Data.GetChainAddresses),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func handleGetChainPledges(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Build GraphQL query
+	query := `{"query":"query chainPledges { getChainPledges { depositAddress amount } }"}`
+
+	// Create request
+	req, err := http.NewRequest("POST", CrowdSolver, bytes.NewBuffer([]byte(query)))
+	if err != nil {
+		http.Error(w, "Error creating request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send request
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		http.Error(w, "Error sending request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Parse response
+	var graphqlResp ChainPledgesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&graphqlResp); err != nil {
+		http.Error(w, "Error parsing response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Prepare response
+	response := map[string]interface{}{
+		"status":  "success",
+		"message": "Chain pledges retrieved successfully",
+		"data":    graphqlResp.Data.GetChainPledges,
+		"count":   len(graphqlResp.Data.GetChainPledges),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func handleTotalPledges(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Build GraphQL query
+	query := `{"query":"query totalPledges { getTotalChainPledges { chain amount } }"}`
+
+	// Create request
+	req, err := http.NewRequest("POST", CrowdSolver, bytes.NewBuffer([]byte(query)))
+	if err != nil {
+		http.Error(w, "Error creating request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send request
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		http.Error(w, "Error sending request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Parse response
+	var graphqlResp TotalPledgesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&graphqlResp); err != nil {
+		http.Error(w, "Error parsing response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	for _, pledge := range graphqlResp.Data.GetTotalChainPledges {
+		amount := 0.0
+		fmt.Sscanf(pledge.Amount, "%f", &amount)
+	}
+
+	// Prepare response
+	response := map[string]interface{}{
+		"status":  "success",
+		"message": "Total chain pledges retrieved successfully",
+		"data":    graphqlResp.Data.GetTotalChainPledges,
+		"count":   len(graphqlResp.Data.GetTotalChainPledges),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func handleCollect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Build GraphQL mutation
+	mutation := `{"query":"mutation collect { collect }"}`
+
+	// Create request
+	req, err := http.NewRequest("POST", CrowdSolver, bytes.NewBuffer([]byte(mutation)))
+	if err != nil {
+		http.Error(w, "Error creating request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send request
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		http.Error(w, "Error sending request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Parse response
+	var graphqlResp CollectResponse
+	if err := json.NewDecoder(resp.Body).Decode(&graphqlResp); err != nil {
+		http.Error(w, "Error parsing response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Prepare response
+	response := map[string]interface{}{
+		"status":    "success",
+		"message":   "Collection process completed",
+		"collected": graphqlResp.Data.Collect,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
 func main() {
 	// Define routes with CORS and logging middleware
 	http.HandleFunc("/post_tx_hash", corsMiddleware(loggingMiddleware(handlePostTxHash)))
+	http.HandleFunc("/add_chain_address", corsMiddleware(loggingMiddleware(handleAddChainAddress)))
+	http.HandleFunc("/chain_addresses", corsMiddleware(loggingMiddleware(handleGetChainAddresses)))
+	http.HandleFunc("/chain_pledges", corsMiddleware(loggingMiddleware(handleGetChainPledges)))
+	http.HandleFunc("/total_pledges", corsMiddleware(loggingMiddleware(handleTotalPledges)))
+	http.HandleFunc("/collect", corsMiddleware(loggingMiddleware(handleCollect)))
 
 	// Start server
 	port := getEnvOrDefault("PORT", "3001")
@@ -363,35 +686,25 @@ func handlePostTxHash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Convert amount to string
+	amountStr := fmt.Sprintf("%d", amount)
+
 	// Build GraphQL mutation
-	mutation := fmt.Sprintf(`
-		mutation {
-			fund(
-				chainName: "%s", 
-				depositAddress: "%s",
-				amount: "%s"
-			)
-		}
-	`, chainToToken[chain], fromAddress, amount)
+	mutation := fmt.Sprintf(`{"query":"mutation calFund{fund(chainName:\"%s\",depositAddress:\"%s\",amount:\"%s\")}"}`, chainToToken[chain], fromAddress, amountStr)
 
-	// Create GraphQL request
-	graphqlReq := struct {
-		Query string `json:"query"`
-	}{
-		Query: mutation,
-	}
-
-	// Convert request to JSON
-	jsonData, err := json.Marshal(graphqlReq)
+	// Create request
+	req, err := http.NewRequest("POST", CrowdSolver, bytes.NewBuffer([]byte(mutation)))
 	if err != nil {
-		http.Error(w, "Error creating GraphQL request: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Error creating request: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Send mutation to Linera node
-	resp, err := http.Post(CrowdSolver, "application/json", bytes.NewBuffer(jsonData))
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send request
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		http.Error(w, "Error sending GraphQL mutation: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Error sending request: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
