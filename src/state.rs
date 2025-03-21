@@ -33,6 +33,12 @@ pub struct CrowdFundingState {
     pub pledges: MapView<AccountOwner, Amount>,
     /// The instantiation data that determine the details the campaign.
     pub instantiation_argument: RegisterView<Option<InstantiationArgument>>,
+
+    pub chain_addresses: MapView<String,String>,
+
+    pub total_chain_pledges: MapView<String, String>,
+
+    pub individual_pledges: MapView<String, String>,
 }
 
 #[allow(dead_code)]

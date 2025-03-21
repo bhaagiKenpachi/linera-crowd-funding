@@ -5,7 +5,9 @@
 
 mod state;
 
-use crowd_funding::{CrowdFundingAbi, InstantiationArgument, Message, Operation};
+use std::num::FpCategory::Zero;
+use async_graphql::InputType;
+use crowd_funding::{CrowdFundingAbi, InstantiationArgument, Message, Operation, TotalChainPledges};
 use fungible::{Account, FungibleTokenAbi};
 use linera_sdk::{
     base::{AccountOwner, Amount, ApplicationId, WithContractAbi},
@@ -59,8 +61,32 @@ impl Contract for CrowdFundingContract {
                     self.execute_pledge_with_transfer(owner, amount);
                 }
             }
-            Operation::Collect => self.collect_pledges(),
+            Operation::Collect => self.collect_pledges().await,
             Operation::Cancel => self.cancel_campaign().await,
+            Operation::AddChain { chain_name, address} => {
+                self.state.chain_addresses.insert(&chain_name, address)
+                    .expect("Failed to insert chain address");
+            }
+            Operation::RemoveChain { chain_name } => {
+                self.state.chain_addresses.remove(&chain_name)
+                    .expect("Failed to remove chain address");
+            }
+            Operation::Fund {
+                chain_name,
+                deposit_address,
+                amount,
+            } => {
+
+                let parse_amount =  amount.parse::<f64>().unwrap();
+
+                let chain_address = self.state.chain_addresses.get(&chain_name).await
+                    .expect("Failed to get chain address")
+                    .expect("chain address not found in store");
+
+                // add amount, and record of deposit
+                self.pledge_chain_amount(chain_name, deposit_address, parse_amount).await;
+
+            }
         }
     }
 
@@ -84,6 +110,38 @@ impl Contract for CrowdFundingContract {
 }
 
 impl CrowdFundingContract {
+
+
+    async fn pledge_chain_amount(&mut self, chain_name: String, deposit_address: String, amount: f64) {
+        let _key = &format!("{}_{}", deposit_address, chain_name);
+        let deposits = self.state.individual_pledges.get(_key).await
+            .expect("Failed to get deposits for the address")
+            .unwrap_or_else(|| {
+                self.state.individual_pledges.insert(&_key.clone(), "0".to_string()).unwrap();
+                "0".to_string()
+            });
+
+        let mut curr_amt_f64: f64 = deposits.parse().unwrap();
+        curr_amt_f64 += amount;
+
+        self.state.individual_pledges.insert(_key,curr_amt_f64.to_string()).unwrap();
+        self.execute_total_chain_pledges(chain_name, amount).await;
+
+    }
+
+    async fn execute_total_chain_pledges(&mut self, chain_name: String, amount: f64) {
+        let curr_amt = self.state.total_chain_pledges.get(&chain_name).await
+            .expect("Failed to get deposits for the address")
+            .unwrap_or_else(|| {
+                self.state.individual_pledges.insert(&chain_name.clone(), "0".to_string()).unwrap();
+                "0".to_string()
+            });
+
+        let mut curr_amt_f64: f64 = curr_amt.parse().unwrap();
+        curr_amt_f64 += amount;
+        self.state.total_chain_pledges.insert(&chain_name, curr_amt_f64.to_string()).unwrap();
+    }
+
     fn fungible_id(&mut self) -> ApplicationId<FungibleTokenAbi> {
         // TODO(#723): We should be able to pull the fungible ID from the
         // `required_application_ids` of the application description.
@@ -138,13 +196,39 @@ impl CrowdFundingContract {
     }
 
     /// Collects all pledges and completes the campaign if the target has been reached.
-    fn collect_pledges(&mut self) {
-        let total = self.balance();
+    async fn collect_pledges(&mut self) {
+        let application_id = self.runtime.application_id();
+        let mut total: f64 = 0.0;
+        self.state.total_chain_pledges.for_each_index_value(|chain, amount| {
+            let request = async_graphql::Request::new(format!(
+                r#"query {{ fetchTokenPrice(token: "{chain}") {{ price }} }}"#
+            ));
+
+            let response = self.runtime.query_service(application_id, request);
+            let async_graphql::Value::Object(data_object) = response.data else {
+                panic!("Unexpected response from `fetchTokenPrice`: {response:?}");
+            };
+
+            let result = match data_object.get("fetchTokenPrice") {
+                Some(async_graphql::Value::Object(result)) => result,
+                _ => panic!("Missing or invalid fetchTokenPrice result in response data: {data_object:?}")
+            };
+
+            let price = match result.get("price") {
+                Some(async_graphql::Value::Number(n)) => n.as_f64().unwrap(),
+                _ => panic!("Invalid price in  result: {result:?}")
+            };
+
+            let curr_amt_f64: f64 = amount.parse().unwrap();
+            total += price * curr_amt_f64;
+            Ok(())
+        }).await.expect("failed to get chain pledges");
+
 
         match self.state.status.get() {
             Status::Active => {
                 assert!(
-                    total >= self.instantiation_argument().target,
+                    total >= self.instantiation_argument().target.parse().unwrap(),
                     "Crowd-funding campaign has not reached its target yet"
                 );
             }
@@ -152,8 +236,6 @@ impl CrowdFundingContract {
             Status::Cancelled => panic!("Crowd-funding campaign has been cancelled"),
         }
 
-        self.send_to(total, self.instantiation_argument().owner);
-        self.state.pledges.clear();
         self.state.status.set(Status::Complete);
     }
 

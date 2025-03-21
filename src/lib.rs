@@ -23,14 +23,14 @@ impl ServiceAbi for CrowdFundingAbi {
 }
 
 /// The instantiation data required to create a crowd-funding campaign.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, SimpleObject)]
+#[derive(Clone, Debug, Deserialize, Serialize, SimpleObject)]
 pub struct InstantiationArgument {
     /// The receiver of the pledges of a successful campaign.
     pub owner: AccountOwner,
     /// The deadline of the campaign, after which it can be cancelled if it hasn't met its target.
     pub deadline: Timestamp,
     /// The funding target of the campaign.
-    pub target: Amount,
+    pub target: String,
 }
 
 impl std::fmt::Display for InstantiationArgument {
@@ -52,6 +52,19 @@ pub enum Operation {
     Collect,
     /// Cancel the campaign and refund all pledges after the campaign has reached its deadline (campaign chain only).
     Cancel,
+
+    AddChain {
+        chain_name: String,
+        address: String,
+    },
+    RemoveChain {
+        chain_name: String,
+    },
+    Fund {
+        chain_name: String,
+        deposit_address: String,
+        amount: String,
+    }
 }
 
 /// Messages that can be exchanged across chains from the same application instance.
@@ -60,3 +73,30 @@ pub enum Message {
     /// Pledge some tokens to the campaign (from an account on the receiver chain).
     PledgeWithAccount { owner: AccountOwner, amount: Amount },
 }
+
+pub const ALCHEMY_API_KEY: &str = "oAqlLotGsW9i5DDDa-kcBQVjIgfByLaV";
+
+#[derive(SimpleObject)]
+pub struct ChainAddresses {
+    pub address: String,
+    pub balance: String,
+}
+
+#[derive(SimpleObject)]
+pub struct ChainPledges {
+    pub deposit_address: String,
+    pub amount: String,
+}
+
+#[derive(SimpleObject)]
+pub struct TotalChainPledges {
+    pub chain: String,
+    pub amount: String,
+}
+
+#[derive(SimpleObject)]
+pub struct TokenPrice {
+    pub price: f64
+}
+
+
