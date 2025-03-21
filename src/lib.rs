@@ -57,9 +57,6 @@ pub enum Operation {
         chain_name: String,
         address: String,
     },
-    AddChains {
-      funds_data:
-    },
     RemoveChain {
         chain_name: String,
     },
