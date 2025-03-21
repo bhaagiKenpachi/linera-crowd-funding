@@ -442,7 +442,7 @@ func main() {
 	http.HandleFunc("/collect", corsMiddleware(loggingMiddleware(handleCollect)))
 
 	// Start server
-	port := getEnvOrDefault("PORT", "3001")
+	port := getEnvOrDefault("PORT", "3003")
 	log.Printf("Server starting on :%s", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatalf("Error starting server: %v", err)
