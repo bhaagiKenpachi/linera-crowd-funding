@@ -60,10 +60,10 @@ struct QueryRoot {
 impl QueryRoot {
     async fn get_chain_addresses(&self) -> Vec<ChainAddresses> {
         let mut chain_addresses = Vec::new();
-        self.state.chain_addresses.for_each_index_value(|address, balance| {
+        self.state.chain_addresses.for_each_index_value(|chain, address| {
             chain_addresses.push(ChainAddresses {
-                address: address.clone(),
-                balance: balance.to_string(),
+                chain: chain.clone(),
+                address: address.to_string(),
             });
             Ok(())
         }).await.expect("Failed to get chain addresses");

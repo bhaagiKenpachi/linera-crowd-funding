@@ -79,7 +79,7 @@ pub const ALCHEMY_API_KEY: &str = "oAqlLotGsW9i5DDDa-kcBQVjIgfByLaV";
 #[derive(SimpleObject)]
 pub struct ChainAddresses {
     pub address: String,
-    pub balance: String,
+    pub chain: String,
 }
 
 #[derive(SimpleObject)]
