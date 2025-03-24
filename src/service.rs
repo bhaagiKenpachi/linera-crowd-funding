@@ -104,6 +104,34 @@ impl QueryRoot {
             price
         })
     }
+
+    async fn total_pledge_in_usd(&self) -> String {
+        let mut total: f64 = 0.0;
+        self.state.total_chain_pledges.for_each_index_value(|chain, amount| {
+            // Handle the Result explicitly rather than using ?
+            match self.calculate_rate(chain.clone()) {
+                Ok(price) => {
+                    let curr_amt_f64: f64 = amount.parse().unwrap();
+                    total += price * curr_amt_f64;
+                },
+                Err(_) => {} // Skip this chain if price calculation fails
+            }
+            Ok(())
+        }).await.expect("failed to get chain pledges");
+
+        total.to_string()
+    }
+
+    // async fn deadline_in_hrf(&self) -> String {
+    //     let deadline = self.state.instantiation_argument.get().as_ref().unwrap().deadline.micros() as i64;
+    //     let datetime = NaiveDateTime::from_timestamp(deadline, 0);
+    //     let datetime_utc: DateTime<Utc> = DateTime::from_utc(datetime, Utc);
+    //     let datetime_utc: DateTime<Utc> = DateTime::from_utc(datetime, Utc);
+    //
+    //     // Format the DateTime<Utc> to a human-readable format
+    //     let formatted_time = datetime_utc.format("%Y-%m-%d %H:%M:%S").to_string();
+    //     formatted_time
+    // }
 }
 
 impl QueryRoot {

@@ -79,10 +79,6 @@ impl Contract for CrowdFundingContract {
 
                 let parse_amount =  amount.parse::<f64>().unwrap();
 
-                let chain_address = self.state.chain_addresses.get(&chain_name).await
-                    .expect("Failed to get chain address")
-                    .expect("chain address not found in store");
-
                 // add amount, and record of deposit
                 self.pledge_chain_amount(chain_name, deposit_address, parse_amount).await;
 
@@ -117,7 +113,7 @@ impl CrowdFundingContract {
         let deposits = self.state.individual_pledges.get(_key).await
             .expect("Failed to get deposits for the address")
             .unwrap_or_else(|| {
-                self.state.individual_pledges.insert(&_key.clone(), "0".to_string()).unwrap();
+                // self.state.individual_pledges.insert(&_key.clone(), "0".to_string()).unwrap();
                 "0".to_string()
             });
 
@@ -133,7 +129,7 @@ impl CrowdFundingContract {
         let curr_amt = self.state.total_chain_pledges.get(&chain_name).await
             .expect("Failed to get deposits for the address")
             .unwrap_or_else(|| {
-                self.state.individual_pledges.insert(&chain_name.clone(), "0".to_string()).unwrap();
+                // self.state.individual_pledges.insert(&chain_name.clone(), "0".to_string()).unwrap();
                 "0".to_string()
             });
 
@@ -195,8 +191,8 @@ impl CrowdFundingContract {
         }
     }
 
-    /// Collects all pledges and completes the campaign if the target has been reached.
-    async fn collect_pledges(&mut self) {
+
+    async fn total_in_usd(&mut self) -> f64 {
         let application_id = self.runtime.application_id();
         let mut total: f64 = 0.0;
         self.state.total_chain_pledges.for_each_index_value(|chain, amount| {
@@ -224,7 +220,12 @@ impl CrowdFundingContract {
             Ok(())
         }).await.expect("failed to get chain pledges");
 
+        total
+    }
 
+    /// Collects all pledges and completes the campaign if the target has been reached.
+    async fn collect_pledges(&mut self) {
+        let total = self.total_in_usd().await;
         match self.state.status.get() {
             Status::Active => {
                 assert!(
@@ -235,7 +236,6 @@ impl CrowdFundingContract {
             Status::Complete => (),
             Status::Cancelled => panic!("Crowd-funding campaign has been cancelled"),
         }
-
         self.state.status.set(Status::Complete);
     }
 
